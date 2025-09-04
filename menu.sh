@@ -115,18 +115,47 @@ configure_tunnel_service() {
   read -p "Port for stunnel [default 443]: " port
   port=${port:-443}
   [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1 && "$port" -le 65535 ]] || { echo "Invalid port."; return; }
-  if ! command -v stunnel &>/dev/null; then
+  
+  if ! command -v stunnel4 &>/dev/null; then
+    echo "[*] Installing stunnel4..."
     apt-get update -y && apt-get install -y stunnel4 || { echo "stunnel install failed."; return; }
-    sed -i 's/ENABLED=0/ENABLED=1/' /etc/default/stunnel4
   fi
+  
+  # Stop and disable old service
+  systemctl stop stunnel4 2>/dev/null || true
+  systemctl disable stunnel4 2>/dev/null || true
+  
+  # Create systemd service if it doesn't exist
+  if [[ ! -f /etc/systemd/system/stunnel4.service ]]; then
+    cat > /etc/systemd/system/stunnel4.service <<EOF
+[Unit]
+Description=SSL tunnel for network daemons
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/stunnel4 /etc/stunnel/stunnel.conf
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=on-failure
+RestartSec=3
+User=stunnel4
+Group=stunnel4
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  fi
+  
+  mkdir -p /etc/stunnel
   if [[ ! -f /etc/stunnel/stunnel.pem ]]; then
     echo "[*] Generating stunnel certificate..."
     openssl req -newkey rsa:4096 -x509 -sha256 -days 3650 -nodes \
-      -subj "/C=US/ST=State/L=City/O=MK-Script/OU=IT/CN=$(hostname)" \
+      -subj "/C=US/ST=State/L=City/O=Infinity-Manager/OU=IT/CN=$(hostname)" \
       -keyout /etc/stunnel/key.pem -out /etc/stunnel/cert.pem
     cat /etc/stunnel/key.pem /etc/stunnel/cert.pem > /etc/stunnel/stunnel.pem
     chmod 600 /etc/stunnel/stunnel.pem
   fi
+  
   cat > /etc/stunnel/stunnel.conf <<EOC
 sslVersion = TLSv1.3
 ciphersuites = TLS_AES_256_GCM_SHA384
@@ -143,9 +172,21 @@ accept = ${port}
 connect = 127.0.0.1:22
 cert = /etc/stunnel/stunnel.pem
 EOC
+  
+  systemctl daemon-reload
   systemctl enable stunnel4
-  systemctl restart stunnel4
-  echo "[+] SSH-SSL tunneling enabled on port $port (persists after reboot)."
+  
+  # Test config before starting
+  if /usr/bin/stunnel4 -test /etc/stunnel/stunnel.conf 2>/dev/null; then
+    systemctl restart stunnel4
+    if systemctl is-active --quiet stunnel4; then
+      echo "[+] SSH-SSL tunneling enabled on port $port (persists after reboot)."
+    else
+      echo "[!] Failed to start stunnel4. Check: systemctl status stunnel4"
+    fi
+  else
+    echo "[!] Invalid stunnel configuration. Service not started."
+  fi
 }
 
 disable_tunnel_service() {

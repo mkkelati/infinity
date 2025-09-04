@@ -8,25 +8,37 @@ fi
 
 echo "=== Installing Infinity Manager ==="
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y && apt-get install -y stunnel4 openssl wget curl vnstat fail2ban nodejs npm
+apt-get update -y && apt-get install -y openssl wget curl vnstat fail2ban nodejs npm
 
-echo "[*] Configuring stunnel service..."
-# Remove old sysvinit configuration
+echo "[*] Installing and configuring stunnel..."
+# Remove any existing stunnel packages and configs
+apt-get remove -y stunnel4 2>/dev/null || true
 rm -f /etc/default/stunnel4
+rm -f /etc/systemd/system/stunnel4.service
+rm -rf /etc/stunnel
 
-# Create systemd service file for stunnel
+# Install stunnel4 fresh
+apt-get install -y stunnel4
+
+# Stop any running stunnel processes
+pkill stunnel4 2>/dev/null || true
+systemctl stop stunnel4 2>/dev/null || true
+systemctl disable stunnel4 2>/dev/null || true
+
+# Create clean systemd service file
 cat > /etc/systemd/system/stunnel4.service <<EOF
 [Unit]
 Description=SSL tunnel for network daemons
 After=network.target
 
 [Service]
-Type=forking
+Type=simple
 ExecStart=/usr/bin/stunnel4 /etc/stunnel/stunnel.conf
 ExecReload=/bin/kill -HUP \$MAINPID
-KillMode=mixed
-TimeoutStopSec=5
-PrivateTmp=true
+Restart=on-failure
+RestartSec=3
+User=stunnel4
+Group=stunnel4
 
 [Install]
 WantedBy=multi-user.target
@@ -68,7 +80,20 @@ fi
 echo "[*] Starting stunnel service..."
 systemctl daemon-reload
 systemctl enable stunnel4
-systemctl start stunnel4
+
+# Test if stunnel config is valid before starting
+if /usr/bin/stunnel4 -test /etc/stunnel/stunnel.conf 2>/dev/null; then
+  systemctl start stunnel4
+  if systemctl is-active --quiet stunnel4; then
+    echo "[+] stunnel4 service started successfully"
+  else
+    echo "[!] stunnel4 failed to start. Check config: /etc/stunnel/stunnel.conf"
+    echo "[*] You can enable it later from the menu"
+  fi
+else
+  echo "[!] stunnel4 configuration is invalid. Service not started."
+  echo "[*] You can configure it later from the menu"
+fi
 
 echo "[*] Deploying menu script..."
 INSTALL_DIR="/usr/local/bin"
