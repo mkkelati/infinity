@@ -11,13 +11,26 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y && apt-get install -y stunnel4 openssl wget curl vnstat fail2ban nodejs npm
 
 echo "[*] Configuring stunnel service..."
-if [[ -f /etc/default/stunnel4 ]]; then
-  if grep -qs "ENABLED=0" /etc/default/stunnel4; then
-    sed -i 's/ENABLED=0/ENABLED=1/' /etc/default/stunnel4
-  fi
-else
-  echo 'ENABLED=1' > /etc/default/stunnel4
-fi
+# Remove old sysvinit configuration
+rm -f /etc/default/stunnel4
+
+# Create systemd service file for stunnel
+cat > /etc/systemd/system/stunnel4.service <<EOF
+[Unit]
+Description=SSL tunnel for network daemons
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/stunnel4 /etc/stunnel/stunnel.conf
+ExecReload=/bin/kill -HUP \$MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
 mkdir -p /etc/stunnel
 STUNNEL_CERT="/etc/stunnel/stunnel.pem"
@@ -53,8 +66,9 @@ EOC
 fi
 
 echo "[*] Starting stunnel service..."
-systemctl restart stunnel4
+systemctl daemon-reload
 systemctl enable stunnel4
+systemctl start stunnel4
 
 echo "[*] Deploying menu script..."
 INSTALL_DIR="/usr/local/bin"

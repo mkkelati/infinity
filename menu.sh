@@ -475,9 +475,11 @@ uninstall_script() {
   [[ "$c" =~ ^[Yy]$ ]] || { echo "Canceled."; return; }
   echo "[*] Removing stunnel..."
   systemctl stop stunnel4 2>/dev/null
+  systemctl disable stunnel4 2>/dev/null
   apt-get remove -y stunnel4 >/dev/null 2>&1
   rm -f /etc/stunnel/stunnel.conf /etc/stunnel/stunnel.pem /etc/stunnel/key.pem /etc/stunnel/cert.pem
-  rm -f /etc/default/stunnel4
+  rm -f /etc/default/stunnel4 /etc/systemd/system/stunnel4.service
+  systemctl daemon-reload
   echo "[*] Removing BadVPN..."
   systemctl stop badvpn 2>/dev/null
   systemctl disable badvpn 2>/dev/null
