@@ -8,7 +8,7 @@ fi
 
 echo "=== Installing Infinity Manager ==="
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y && apt-get install -y stunnel4 openssl
+apt-get update -y && apt-get install -y stunnel4 openssl wget curl vnstat fail2ban nodejs npm
 
 echo "[*] Configuring stunnel service..."
 if [[ -f /etc/default/stunnel4 ]]; then
@@ -61,7 +61,7 @@ INSTALL_DIR="/usr/local/bin"
 # Download menu.sh from GitHub if not present locally
 if [[ ! -f "menu.sh" ]]; then
   echo "[*] Downloading menu.sh from GitHub..."
-  wget -q https://raw.githubusercontent.com/mkkelati/mk-script/main/menu.sh
+  wget -q https://raw.githubusercontent.com/mkkelati/infinity/main/menu.sh
 fi
 cp -f menu.sh "${INSTALL_DIR}/menu"
 chmod +x "${INSTALL_DIR}/menu"
@@ -88,5 +88,59 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
 fi
+
+# Setup vnStat for traffic monitoring
+echo "[*] Configuring vnStat..."
+systemctl enable vnstat 2>/dev/null || true
+systemctl start vnstat 2>/dev/null || true
+
+# Setup Fail2Ban (disabled by default)
+echo "[*] Configuring Fail2Ban..."
+if [[ ! -f /etc/fail2ban/jail.local ]]; then
+  cat > /etc/fail2ban/jail.local <<EOF
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 3
+backend = auto
+
+[sshd]
+enabled = false
+port = ssh
+logpath = /var/log/auth.log
+maxretry = 3
+
+[sshd-ddos]
+enabled = false
+port = ssh
+logpath = /var/log/auth.log
+maxretry = 2
+EOF
+fi
+
+# Setup SSH WebSocket service (disabled by default)
+echo "[*] Configuring SSH WebSocket..."
+if [[ ! -f /etc/systemd/system/ssh-websocket.service ]]; then
+  cat > /etc/systemd/system/ssh-websocket.service <<EOF
+[Unit]
+Description=SSH WebSocket Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ws-tunnel --server ws://0.0.0.0:8080 --target 127.0.0.1:22
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+fi
+
+# Install ws-tunnel globally
+echo "[*] Installing ws-tunnel..."
+npm install -g ws-tunnel 2>/dev/null || echo "[!] ws-tunnel installation failed, will install on first use"
 
 echo "[+] Installation complete. Run 'menu' to start."
