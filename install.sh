@@ -25,20 +25,35 @@ pkill stunnel4 2>/dev/null || true
 systemctl stop stunnel4 2>/dev/null || true
 systemctl disable stunnel4 2>/dev/null || true
 
-# Create clean systemd service file
+# Create proper /etc/default/stunnel4 for compatibility
+cat > /etc/default/stunnel4 <<EOF
+# /etc/default/stunnel4
+# Change to one to enable stunnel4 startup
+ENABLED=1
+
+# Change to a user with privileges to reduce security risks
+# For example, to run as nobody, use UID = 65534
+FILES="/etc/stunnel/*.conf"
+OPTIONS=""
+
+# Change to /var/log/stunnel4/stunnel.log if you want logging
+# and create the directory with appropriate permissions
+# LOG="/var/log/stunnel4/stunnel.log"
+EOF
+
+# Create systemd service that works with the default config
 cat > /etc/systemd/system/stunnel4.service <<EOF
 [Unit]
-Description=SSL tunnel for network daemons
+Description=LSSL tunnel for network daemons
 After=network.target
 
 [Service]
-Type=simple
-ExecStart=/usr/bin/stunnel4 /etc/stunnel/stunnel.conf
+Type=forking
+ExecStart=/usr/bin/stunnel4 /etc/default/stunnel4
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 RestartSec=3
-User=stunnel4
-Group=stunnel4
+PIDFile=/var/run/stunnel4/stunnel4.pid
 
 [Install]
 WantedBy=multi-user.target
@@ -78,17 +93,30 @@ EOC
 fi
 
 echo "[*] Starting stunnel service..."
+# Create PID directory
+mkdir -p /var/run/stunnel4
+chown stunnel4:stunnel4 /var/run/stunnel4 2>/dev/null || true
+
 systemctl daemon-reload
 systemctl enable stunnel4
 
 # Test if stunnel config is valid before starting
 if /usr/bin/stunnel4 -test /etc/stunnel/stunnel.conf 2>/dev/null; then
   systemctl start stunnel4
+  sleep 2
   if systemctl is-active --quiet stunnel4; then
     echo "[+] stunnel4 service started successfully"
   else
-    echo "[!] stunnel4 failed to start. Check config: /etc/stunnel/stunnel.conf"
-    echo "[*] You can enable it later from the menu"
+    echo "[!] stunnel4 failed to start. Trying alternative approach..."
+    # Try starting with the default init script
+    /etc/init.d/stunnel4 start 2>/dev/null || true
+    sleep 2
+    if systemctl is-active --quiet stunnel4 || pgrep stunnel4 >/dev/null; then
+      echo "[+] stunnel4 started with alternative method"
+    else
+      echo "[!] stunnel4 failed to start. Check: systemctl status stunnel4"
+      echo "[*] You can enable it later from the menu"
+    fi
   fi
 else
   echo "[!] stunnel4 configuration is invalid. Service not started."

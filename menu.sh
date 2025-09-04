@@ -124,27 +124,42 @@ configure_tunnel_service() {
   # Stop and disable old service
   systemctl stop stunnel4 2>/dev/null || true
   systemctl disable stunnel4 2>/dev/null || true
+  pkill stunnel4 2>/dev/null || true
+  
+  # Create proper /etc/default/stunnel4
+  cat > /etc/default/stunnel4 <<EOF
+# /etc/default/stunnel4
+# Change to one to enable stunnel4 startup
+ENABLED=1
+
+# Change to a user with privileges to reduce security risks
+FILES="/etc/stunnel/*.conf"
+OPTIONS=""
+EOF
   
   # Create systemd service if it doesn't exist
   if [[ ! -f /etc/systemd/system/stunnel4.service ]]; then
     cat > /etc/systemd/system/stunnel4.service <<EOF
 [Unit]
-Description=SSL tunnel for network daemons
+Description=LSSL tunnel for network daemons
 After=network.target
 
 [Service]
-Type=simple
-ExecStart=/usr/bin/stunnel4 /etc/stunnel/stunnel.conf
+Type=forking
+ExecStart=/usr/bin/stunnel4 /etc/default/stunnel4
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
 RestartSec=3
-User=stunnel4
-Group=stunnel4
+PIDFile=/var/run/stunnel4/stunnel4.pid
 
 [Install]
 WantedBy=multi-user.target
 EOF
   fi
+  
+  # Create PID directory
+  mkdir -p /var/run/stunnel4
+  chown stunnel4:stunnel4 /var/run/stunnel4 2>/dev/null || true
   
   mkdir -p /etc/stunnel
   if [[ ! -f /etc/stunnel/stunnel.pem ]]; then
@@ -178,11 +193,21 @@ EOC
   
   # Test config before starting
   if /usr/bin/stunnel4 -test /etc/stunnel/stunnel.conf 2>/dev/null; then
+    systemctl daemon-reload
     systemctl restart stunnel4
+    sleep 2
     if systemctl is-active --quiet stunnel4; then
       echo "[+] SSH-SSL tunneling enabled on port $port (persists after reboot)."
     else
-      echo "[!] Failed to start stunnel4. Check: systemctl status stunnel4"
+      echo "[!] Failed to start with systemd. Trying alternative approach..."
+      # Try starting with the default init script
+      /etc/init.d/stunnel4 start 2>/dev/null || true
+      sleep 2
+      if systemctl is-active --quiet stunnel4 || pgrep stunnel4 >/dev/null; then
+        echo "[+] SSH-SSL tunneling enabled on port $port (alternative method)."
+      else
+        echo "[!] Failed to start stunnel4. Check: systemctl status stunnel4"
+      fi
     fi
   else
     echo "[!] Invalid stunnel configuration. Service not started."
